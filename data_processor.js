@@ -2,9 +2,13 @@ const pg = require("pg");
 const { createReadStream } = require("node:fs");
 const { createInterface } = require("node:readline");
 
+const DATABASE_NAME = "public";
+const PASSWORD ="postgres";
+const USER = "postgres";
 const SCHEMA_NAME = "public";
 const TABLE_NANE = "users_revenue";
-const FILE_PATH = "events.txt"
+const FILE_PATH = "events.txt";
+
 
 function getEventOperator(event) {
     switch (event.name) {
@@ -25,6 +29,13 @@ async function updateDbFromLine(line, client) {
 
     // Get operator (+/-) which relevant for value of current event.
     const eventOperator = getEventOperator(event);
+
+    // Lock the row for update, to prevent other transactions from modifying it.
+    await client.query(`
+        SELECT * FROM ${SCHEMA_NAME}.${TABLE_NANE}
+        WHERE user_id = '${event.userId}'
+        FOR UPDATE;
+    `);
 
     // Perform 'upsert' (i.e. update or insert) of the relevnt row.
     await client.query(`
@@ -62,27 +73,27 @@ async function updateDbFromFile(client) {
 }
 
 async function connectToDb() {
-    client = new pg.Client({ database: "public", password: "postgres", user: "postgres" });
+    const client = new pg.Client({ database: DATABASE_NAME, password: PASSWORD, user: USER });
     await client.connect();
     return client;
 }
 
 async function createTableAndIndexIfNotExists(client) {
     await client.query(`CREATE TABLE IF NOT EXISTS ${SCHEMA_NAME}.${TABLE_NANE} (user_id varchar, revenue integer)`);
-    await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS user_id_unique ON ${SCHEMA_NAME}.${TABLE_NANE} (user_id)`);
+    await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS user_id_unique ON ${SCHEMA_NAME}.${TABLE_NANE} (user_id)`); // Index on 'user_id' will improve our SELECT clauses, and also - 'ON CONFLICT (user_id)' within the 'upsert' query (see method ' updateDbFromLine()') cannot work without such a definition.
 }
 
 async function update() {
     let client;
     try {
         client = await connectToDb();
-        await client.query("BEGIN")
+        await client.query("BEGIN"); // Begin transaction.
         await createTableAndIndexIfNotExists(client);   
         await updateDbFromFile(client);
-        await client.query("COMMIT")
+        await client.query("COMMIT"); // Commit transaction.
     } catch (err) {
         if (client) {
-            await client.query("ROLLBACK")
+            await client.query("ROLLBACK"); // Rollback transaction.
         }
         throw err;
     } finally {
@@ -92,12 +103,12 @@ async function update() {
     }
 }
 
-console.info("Update will started");
+console.info("Update started");
 update()
     .then(() => {
-        console.info("Update was ended");
+        console.info("Update ended");
     })
     .catch((err) => {
-        console.error("Update was failed", {err});
+        console.error("Update failed", {err});
     })
 
