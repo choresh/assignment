@@ -76,13 +76,13 @@ async function update() {
     let client;
     try {
         client = await connectToDb();
-        // await client.query("BEGIN")
+        await client.query("BEGIN")
         await createTableAndIndexIfNotExists(client);   
         await updateDbFromFile(client);
-        // await client.query("COMMIT")
+        await client.query("COMMIT")
     } catch (err) {
         if (client) {
-            // await client.query("ROLLBACK")
+            await client.query("ROLLBACK")
         }
         throw err;
     } finally {
