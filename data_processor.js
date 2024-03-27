@@ -1,5 +1,4 @@
 const pg = require("pg");
-const { once } = require("node:events");
 const { createReadStream } = require("node:fs");
 const { createInterface } = require("node:readline");
 
@@ -27,8 +26,6 @@ async function updateDbFromLine(line, client) {
     // Get operator (+/-) which relevant for value of current event.
     const eventOperator = getEventOperator(event);
 
-    console.log("ZZZ-3", { event });
-
     // Perform 'upsert' (i.e. update or insert) of the relevnt row.
     await client.query(`
         INSERT INTO ${SCHEMA_NAME}.${TABLE_NANE} (user_id, revenue)
@@ -36,8 +33,6 @@ async function updateDbFromLine(line, client) {
         ON CONFLICT (user_id)
         DO UPDATE SET revenue = ${SCHEMA_NAME}.${TABLE_NANE}.revenue ${eventOperator} ${event.value};
     `);
-
-    console.log("ZZZ-4", { event });
 }
 
 async function updateDbFromFile(client) {
@@ -49,14 +44,18 @@ async function updateDbFromFile(client) {
     });
 
     // Deal with events of the lines reader.
-    return new Promise((resolve, reject) => {
+    return new Promise(async (resolve, reject) => {
         linesReader.on("close", () => {
-            // resolve(); // File's lines reading ended, resolve the promise.
+            // * File's lines reading ended, resolve the promise.
+            // * The 'setTimeout()' is workaround, to deal with bizarre behavior of the lines reader ('close' event triggered before last 'line' event).
+            setTimeout(resolve, 1000);
         });
         linesReader.on("error", (err) => {
-            reject(err); // File's lines reading failed, reject the promise.
+            // File's lines reading failed, reject the promise.
+            reject(err);
         });
-        linesReader.on("line", async (line) => {  // File's lines reader notify about current fetched line.
+        linesReader.on("line", async (line) => { 
+            // File's lines reader notify about current fetched line, create/update relevant row in DB.
             await updateDbFromLine(line, client);
         });
     });
@@ -80,7 +79,6 @@ async function update() {
         // await client.query("BEGIN")
         await createTableAndIndexIfNotExists(client);   
         await updateDbFromFile(client);
-        console.log("ZZZ-2");
         // await client.query("COMMIT")
     } catch (err) {
         if (client) {
