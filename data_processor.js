@@ -7,52 +7,84 @@ const SCHEMA_NAME = "public";
 const TABLE_NANE = "users_revenue";
 const FILE_PATH = "events.txt"
 
-async function readLineByLine(path, lineHandler) {
-    const rl = createInterface({
-        input: createReadStream(path),
+function getEventOperator(event) {
+    switch (event.name) {
+        case "add_revenue":
+            return '+';
+        case "subtract_revenue":
+            return '-';
+        default:
+            console.error("Invalid line", { event });
+            throw new Error("Invalid line");
+    }
+}
+
+async function updateDbFromLine(line, client) {
+
+    // Convers string to JSON object.
+    const event = JSON.parse(line);
+
+    // Get operator (+/-) which relevant for value of current event.
+    const eventOperator = getEventOperator(event);
+
+    console.log("ZZZ-3", { event });
+
+    // Perform 'upsert' (i.e. update or insert) of the relevnt row.
+    await client.query(`
+        INSERT INTO ${SCHEMA_NAME}.${TABLE_NANE} (user_id, revenue)
+        VALUES ('${event.userId}', ${eventOperator} ${event.value})
+        ON CONFLICT (user_id)
+        DO UPDATE SET revenue = ${SCHEMA_NAME}.${TABLE_NANE}.revenue ${eventOperator} ${event.value};
+    `);
+
+    console.log("ZZZ-4", { event });
+}
+
+async function updateDbFromFile(client) {
+
+    // The 'linesReader' enable us to read the file content in 'line by line' manner.
+    const linesReader = createInterface({
+        input: createReadStream(FILE_PATH),
         crlfDelay: Infinity,
     });
-    rl.on("line", async (line) => {
-        await lineHandler(line)
+
+    // Deal with events of the lines reader.
+    return new Promise((resolve, reject) => {
+        linesReader.on("close", () => {
+            // resolve(); // File's lines reading ended, resolve the promise.
+        });
+        linesReader.on("error", (err) => {
+            reject(err); // File's lines reading failed, reject the promise.
+        });
+        linesReader.on("line", async (line) => {  // File's lines reader notify about current fetched line.
+            await updateDbFromLine(line, client);
+        });
     });
-    await once(rl, "close");
+}
+
+async function connectToDb() {
+    client = new pg.Client({ database: "public", password: "postgres", user: "postgres" });
+    await client.connect();
+    return client;
+}
+
+async function createTableAndIndexIfNotExists(client) {
+    await client.query(`CREATE TABLE IF NOT EXISTS ${SCHEMA_NAME}.${TABLE_NANE} (user_id varchar, revenue integer)`);
+    await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS user_id_unique ON ${SCHEMA_NAME}.${TABLE_NANE} (user_id)`);
 }
 
 async function update() {
     let client;
     try {
-        client = new pg.Client({password: "postgres", user: "postgres"});
-        await client.connect();
-
-        await client.query("BEGIN")
-
-        const res = await client.query(`CREATE TABLE IF NOT EXISTS ${SCHEMA_NAME}.${TABLE_NANE} (user_id varchar, revenue integer)`)
-        console.log("Table was created if not exists yet", { res });
-
-        await readLineByLine(FILE_PATH, async (line) => {
-            const lineObj = JSON.parse(line);
-            console.info("Curr line:", lineObj)
-            let revenueChange;
-            switch(lineObj.name) {
-                case "add_revenue":
-                    break;
-                case "subtract_revenue":
-                    break;
-                default:
-                    console.error("Invalid line:", lineObj);
-                    return; // Ignore the error.
-            }
-            const res = await client.query(`
-                UPDATE ${SCHEMA_NAME}.${TABLE_NANE}
-                SET usr_score = revenue + {}
-                WHERE user_id = '${lineObj.userId}';`
-            );
-        });
-
-        await client.query("COMMIT")
+        client = await connectToDb();
+        // await client.query("BEGIN")
+        await createTableAndIndexIfNotExists(client);   
+        await updateDbFromFile(client);
+        console.log("ZZZ-2");
+        // await client.query("COMMIT")
     } catch (err) {
         if (client) {
-            await client.query("ROLLBACK")
+            // await client.query("ROLLBACK")
         }
         throw err;
     } finally {
@@ -70,3 +102,4 @@ update()
     .catch((err) => {
         console.error("Update was failed", {err});
     })
+
