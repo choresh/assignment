@@ -4,8 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "start": "node server.js",
     "test": "test"
   },
-  "author": "raanan34@gmail.com",
-  "license": "ISC"
+  "author": "raanan34@gmail.com"
 }
