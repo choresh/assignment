@@ -13,7 +13,7 @@ async function addEvent(request) {
         })
         .on('end', async () => {
             const bodyJson = JSON.parse(Buffer.concat(body).toString());
-            await fsPromises.appendFile(FILE_PATH, JSON.stringify(bodyJson), {encoding: "utf-8"})
+            await fsPromises.appendFile(FILE_PATH, JSON.stringify(bodyJson) + "\n", {encoding: "utf-8"})
             console.log("Add event - ended", {bodyJson})
             resolve();
         });

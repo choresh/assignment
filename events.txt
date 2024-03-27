@@ -1,1 +1,2 @@
 {"userId":"abc123","name":"add_revenue","value":432}
+{"userId":"abc123_","name":"add_revenue","value":432}
