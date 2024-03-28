@@ -3,6 +3,13 @@ const pg = require("pg");
 const {createReadStream } = require("node:fs");
 const {createInterface } = require("node:readline");
 
+// //////////////////////////////////////////
+// Notes: 
+// 1) Need add lock mechanizem, to prevent colision between 'storeEvent()'
+//   (write to file) and 'readFileLines()' (read and truncate the file).
+// 2) In order to minimize the lock time during the read - we can rename the file (temporarily, since
+//    we can delete it at end of the read), and imidiatly create new file, with the original name.
+// //////////////////////////////////////////
 class FsHelper {
     static SRC_EVENTS_FILE_PATH = "events.jsonl";
     static RECIEVED_EVENTS_FILE_PATH = "recieved-events.jsonl";
@@ -14,7 +21,10 @@ class FsHelper {
     static async readFileLines(path, linesHandler, truncate) {
 
         // The 'linesReader' enable us to read the file content in 'line by line' manner.
-        const linesReader = FsHelper._createLinesReader(path);
+        const linesReader = createInterface({
+            input: createReadStream(path),
+            crlfDelay: Infinity,
+        });
 
         // Deal with events of the lines reader.
         return new Promise(async (resolve, reject) => {
@@ -36,13 +46,6 @@ class FsHelper {
                 // File's lines reader notify about current fetched line, notify client about the line.
                 await linesHandler(line);
             });
-        });
-    }
-
-    static _createLinesReader(path) {
-        return createInterface({
-            input: createReadStream(path),
-            crlfDelay: Infinity,
         });
     }
 }
