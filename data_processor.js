@@ -1,19 +1,24 @@
+const fs = require("fs");
 const pg = require("pg");
-const { createReadStream } = require("node:fs");
-const { createInterface } = require("node:readline");
+const {createReadStream } = require("node:fs");
+const {createInterface } = require("node:readline");
 
-class FsFacade {
+class FsHelper {
     static FILE_PATH = "events.txt";
 
     static createLinesReader() {
         return createInterface({
-            input: createReadStream(FsFacade.FILE_PATH),
+            input: createReadStream(FsHelper.FILE_PATH),
             crlfDelay: Infinity,
         });
     }
+
+    async storeEvent(event) {
+        await fs.promises.appendFile(FsHelper.FILE_PATH, JSON.stringify(event) + "\n", {encoding: "utf-8"});
+    }
 }
 
-class DbFacade {
+class DbHelper {
     static DATABASE_NAME = "public";
     static PASSWORD ="postgres";
     static USER = "postgres";
@@ -21,33 +26,41 @@ class DbFacade {
     static TABLE_NANE = "users_revenue";
     
     static async create() {
-        let instance = new DbFacade()
-        instance._client = new pg.Client({ database: DbFacade.DATABASE_NAME, password: DbFacade.PASSWORD, user: DbFacade.USER });
+        let instance = new DbHelper()
+        instance._client = new pg.Client({database: DbHelper.DATABASE_NAME, password: DbHelper.PASSWORD, user: DbHelper.USER });
         await instance._client.connect();
         return instance;
     }
 
     async createTableAndIndexIfNotExists() {
-        await this._client.query(`CREATE TABLE IF NOT EXISTS ${DbFacade.SCHEMA_NAME}.${DbFacade.TABLE_NANE} (user_id varchar, revenue integer)`);
-        await this._client.query(`CREATE UNIQUE INDEX IF NOT EXISTS user_id_unique ON ${DbFacade.SCHEMA_NAME}.${DbFacade.TABLE_NANE} (user_id)`); // Index on 'user_id' will improve our SELECT clauses, and also - 'ON CONFLICT (user_id)' within the 'upsert' query (see method ' updateDbFromLine()') cannot work without such a definition.
+        await this._client.query(`CREATE TABLE IF NOT EXISTS ${DbHelper.SCHEMA_NAME}.${DbHelper.TABLE_NANE} (user_id varchar, revenue integer)`);
+        await this._client.query(`CREATE UNIQUE INDEX IF NOT EXISTS user_id_unique ON ${DbHelper.SCHEMA_NAME}.${DbHelper.TABLE_NANE} (user_id)`); // Index on 'user_id' will improve our SELECT clauses, and also - 'ON CONFLICT (user_id)' within the 'upsert' query (see method ' updateDbFromLine()') cannot work without such a definition.
     }
 
     async updateDbRow(event, eventOperator) {
     
         // Lock the row for update, to prevent other transactions from modifying it.
         await this._client.query(`
-            SELECT * FROM ${DbFacade.SCHEMA_NAME}.${DbFacade.TABLE_NANE}
+            SELECT * FROM ${DbHelper.SCHEMA_NAME}.${DbHelper.TABLE_NANE}
             WHERE user_id = '${event.userId}'
             FOR UPDATE;
         `);
     
         // Perform 'upsert' (i.e. update or insert) of the relevnt row.
         await this._client.query(`
-            INSERT INTO ${DbFacade.SCHEMA_NAME}.${DbFacade.TABLE_NANE} (user_id, revenue)
+            INSERT INTO ${DbHelper.SCHEMA_NAME}.${DbHelper.TABLE_NANE} (user_id, revenue)
             VALUES ('${event.userId}', ${eventOperator} ${event.value})
             ON CONFLICT (user_id)
-            DO UPDATE SET revenue = ${DbFacade.SCHEMA_NAME}.${DbFacade.TABLE_NANE}.revenue ${eventOperator} ${event.value};
+            DO UPDATE SET revenue = ${DbHelper.SCHEMA_NAME}.${DbHelper.TABLE_NANE}.revenue ${eventOperator} ${event.value};
         `);
+    }
+
+    async getEvent(userId) {
+        const result = await this._client.query(`
+            SELECT * FROM ${DbHelper.SCHEMA_NAME}.${DbHelper.TABLE_NANE}
+            WHERE user_id = '${userId}'
+        `);
+        return result.rows;
     }
 
     async beginTransaction() {
@@ -72,21 +85,21 @@ class DbFacade {
 class DataProcessor {
 
     static async update() {
-        let dbFacade;
+        let dbHelper;
         try {
-            dbFacade = await DbFacade.create();
-            await dbFacade.beginTransaction();
-            await dbFacade.createTableAndIndexIfNotExists();   
-            await DataProcessor._updateDbFromFile(dbFacade);
-            await dbFacade.commitTransaction();
+            dbHelper = await DbHelper.create();
+            await dbHelper.beginTransaction();
+            await dbHelper.createTableAndIndexIfNotExists();   
+            await DataProcessor._updateDbFromFile(dbHelper);
+            await dbHelper.commitTransaction();
         } catch (err) {
-            if (dbFacade) {
-                await dbFacade.rollbackTransaction();
+            if (dbHelper) {
+                await dbHelper.rollbackTransaction();
             }
             throw err;
         } finally {
-            if (dbFacade) {
-                await dbFacade.destroy();
+            if (dbHelper) {
+                await dbHelper.destroy();
             }
         }
     }
@@ -94,16 +107,16 @@ class DataProcessor {
     static _getEventOperator(event) {
         switch (event.name) {
             case "add_revenue":
-                return '+';
+                return "+";
             case "subtract_revenue":
-                return '-';
+                return "-";
             default:
-                console.error("Invalid line", { event });
+                console.error("Invalid line", {event});
                 throw new Error("Invalid line");
         }
     }
 
-    static async _updateDbFromLine(line, dbFacade) {
+    static async _updateDbFromLine(line, dbHelper) {
 
         // Convers string to JSON object.
         const event = JSON.parse(line);
@@ -111,13 +124,14 @@ class DataProcessor {
         // Get operator (+/-) which relevant for value of current event.
         const eventOperator = DataProcessor._getEventOperator(event);
 
-        await dbFacade.updateDbRow(event, eventOperator);
+        // Update row of relevant user.
+        await dbHelper.updateDbRow(event, eventOperator);
     }
 
-    static async _updateDbFromFile(dbFacade) {
+    static async _updateDbFromFile(dbHelper) {
 
         // The 'linesReader' enable us to read the file content in 'line by line' manner.
-        const linesReader = FsFacade.createLinesReader();
+        const linesReader = FsHelper.createLinesReader();
 
         // Deal with events of the lines reader.
         return new Promise(async (resolve, reject) => {
@@ -130,9 +144,9 @@ class DataProcessor {
                 // File's lines reading failed, reject the promise.
                 reject(err);
             });
-            linesReader.on("line", async (line) => { 
+            linesReader.on("line", async (line) => {
                 // File's lines reader notify about current fetched line, create/update relevant row in DB.
-                await DataProcessor._updateDbFromLine(line, dbFacade);
+                await DataProcessor._updateDbFromLine(line, dbHelper);
             });
         });
     }
@@ -147,3 +161,8 @@ DataProcessor.update()
         console.error("Update failed", {err});
     })
 
+    
+module.exports = {
+    DbHelper,
+    FsHelper
+}
