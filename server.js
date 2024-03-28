@@ -56,10 +56,14 @@ http.createServer(async (req, res) => {
         case "POST":
             switch (pathTokens[1]) {
                 case "liveEvent":
-                    try {
-                        await addEvent(req);
-                    } catch (err) {
-                        res.writeHead(400);
+                    if (req.headers.authorization !== "secret") {
+                        res.writeHead(401);
+                    } else {
+                        try {
+                            await addEvent(req);
+                        } catch (err) {
+                            res.writeHead(400);
+                        }
                     }
                     res.end();
                     return;

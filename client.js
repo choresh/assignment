@@ -7,7 +7,7 @@ class Client {
             // File's lines reader notify about current fetched line, send relevant event to our server.
             const event = JSON.parse(line);
             try {
-                await axios.post("http://localhost:8000/liveEvent", event);
+                await axios.post("http://localhost:8000/liveEvent", event, {headers: {Authorization: "secret"}});
             } catch {
                 throw new Error("Server is unreachable");
             }
