@@ -26,4 +26,4 @@ npm run update
 ```
 
 ## Use the app
-Open browser, navigate to http://localhost:8000/userEvents/user1 or http://localhost:8000/userEvents/user2, the browser suppose to display data like `{"user_id":"user1","revenue":220}`.
+Open browser, navigate to http://localhost:8000/userEvents/user1 or http://localhost:8000/userEvents/user2, the browser suppose to display data like `{"user_id":"user1","revenue":27}`.
