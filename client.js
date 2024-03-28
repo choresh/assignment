@@ -5,9 +5,12 @@ class Client {
     static async run() {
         await helpers.FsHelper.readFileLines(helpers.FsHelper.SRC_EVENTS_FILE_PATH, async (line) => {
             // File's lines reader notify about current fetched line, send relevant event to our server.
-            console.info({line});
             const event = JSON.parse(line);
-            axios.post("http://localhost:8000/liveEvent", event);
+            try {
+                await axios.post("http://localhost:8000/liveEvent", event);
+            } catch {
+                throw new Error("Server is unreachable");
+            }
         });
     }
 }
@@ -18,5 +21,5 @@ Client.run()
         console.info("Client ended");
     })
     .catch((err) => {
-        console.error("Client failed", {err});
+        console.error("Client failed", {message: err.message});
     })

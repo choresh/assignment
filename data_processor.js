@@ -11,7 +11,7 @@ class FsHelper {
         await fs.promises.appendFile(FsHelper.RECIEVED_EVENTS_FILE_PATH, JSON.stringify(event) + "\n", {encoding: "utf-8"});
     }
 
-    static async readFileLines(path, linesHandler) {
+    static async readFileLines(path, linesHandler, truncate) {
 
         // The 'linesReader' enable us to read the file content in 'line by line' manner.
         const linesReader = FsHelper._createLinesReader(path);
@@ -19,9 +19,14 @@ class FsHelper {
         // Deal with events of the lines reader.
         return new Promise(async (resolve, reject) => {
             linesReader.on("close", () => {
-                // * File's lines reading ended, resolve the promise.
-                // * The 'setTimeout()' is workaround, to deal with bizarre behavior of the lines reader ('close' event triggered before last 'line' event).
-                setTimeout(resolve, 1000);
+                // The 'setTimeout()' is workaround, to deal with bizarre behavior of the lines reader ('close' event arrived BEFORE arrival of last 'line' event).
+                setTimeout(async () => {
+                    if (truncate) {
+                        await fs.promises.truncate(path);
+                    }
+                    // File's lines reading ended, resolve the promise.
+                    resolve();
+                }, 1000);
             });
             linesReader.on("error", (err) => {
                 // File's lines reading failed, reject the promise.
@@ -61,7 +66,7 @@ class DbHelper {
         await this._client.query(`CREATE UNIQUE INDEX IF NOT EXISTS user_id_unique ON ${DbHelper.SCHEMA_NAME}.${DbHelper.TABLE_NANE} (user_id)`); // Index on 'user_id' will improve our SELECT clauses, and also - 'ON CONFLICT (user_id)' within the 'upsert' query (see method ' updateDbFromLine()') cannot work without such a definition.
     }
 
-    async updateDbRow(event, eventOperator) {
+    async updateUserData(event, eventOperator) {
     
         // Lock the row for update, to prevent other transactions from modifying it.
         await this._client.query(`
@@ -79,7 +84,7 @@ class DbHelper {
         `);
     }
 
-    async getEvent(userId) {
+    async getUserData(userId) {
         const result = await this._client.query(`
             SELECT * FROM ${DbHelper.SCHEMA_NAME}.${DbHelper.TABLE_NANE}
             WHERE user_id = '${userId}'
@@ -106,7 +111,6 @@ class DbHelper {
     }
 }
 
-  
 module.exports = {
     DbHelper,
     FsHelper
@@ -120,7 +124,7 @@ class DataProcessor {
             dbHelper = await DbHelper.create();
             await dbHelper.beginTransaction();
             await dbHelper.createTableAndIndexIfNotExists();   
-            await DataProcessor._updateDbFromFile(dbHelper);
+            await DataProcessor._handleAllEvents(dbHelper);
             await dbHelper.commitTransaction();
         } catch (err) {
             if (dbHelper) {
@@ -141,12 +145,11 @@ class DataProcessor {
             case "subtract_revenue":
                 return "-";
             default:
-                console.error("Invalid line", {event});
                 throw new Error("Invalid line");
         }
     }
 
-    static async _updateDbFromLine(line, dbHelper) {
+    static async _handleSingleEvent(line, dbHelper) {
 
         // Convers string to JSON object.
         const event = JSON.parse(line);
@@ -155,14 +158,14 @@ class DataProcessor {
         const eventOperator = DataProcessor._getEventOperator(event);
 
         // Update row of relevant user.
-        await dbHelper.updateDbRow(event, eventOperator);
+        await dbHelper.updateUserData(event, eventOperator);
     }
 
-    static async _updateDbFromFile(dbHelper) {
+    static async _handleAllEvents(dbHelper) {
         await FsHelper.readFileLines(FsHelper.RECIEVED_EVENTS_FILE_PATH, async (line) => {
             // File's lines reader notify about current fetched line, create/update relevant row in DB.
-            await DataProcessor._updateDbFromLine(line, dbHelper);
-        });
+            await DataProcessor._handleSingleEvent(line, dbHelper);
+        }, true);
     }
 }
 
