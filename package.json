@@ -2,13 +2,14 @@
   "name": "assignment",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
   "scripts": {
-    "start": "node server.js",
+    "server": "node server.js",
+    "client": "node client.js",
     "update": "node data_processor.js"
   },
   "author": "raanan34@gmail.com",
   "dependencies": {
-    "pg": "^8.11.3"
+    "pg": "^8.11.3",
+    "axios": "^1.6.8"
   }
 }

@@ -5,15 +5,26 @@ const helpers = require("./data_processor");
 async function addEvent(request) {
     console.log("Add event - started");
     return new Promise((resolve, reject) => {
-        const  body = [];
+        const body = [];
         request.on("data", (chunk) => {
             body.push(chunk);
         })
         .on("end", async () => {
-            const event = JSON.parse(Buffer.concat(body).toString());
-            await helpers.FsHelper.storeEvent(event);
-            console.log("Add event - ended", {bodyJson});
-            resolve();
+            try {
+                const event = JSON.parse(Buffer.concat(body).toString());
+                if (!event.userId || !event.value || (event.name !== "add_revenue" && event.name !== "subtract_revenue")) {
+                    const err = new Error("Invalid event data")
+                    console.error("Add event - failed", {err});
+                    reject(err);
+                } else {
+                    await helpers.FsHelper.storeEvent(event);
+                    console.log("Add event - ended", {event});
+                    resolve();
+                }
+            } catch (err) {
+                console.error("Add event - failed", {err});
+                reject(err);
+            }
         });
     });
 }
@@ -54,7 +65,11 @@ http.createServer(async (req, res) => {
         case "POST":
             switch (pathTokens[1]) {
                 case "liveEvent":
-                    await addEvent(req);
+                    try {
+                        await addEvent(req);
+                    } catch (err) {
+                        res.writeHead(400);
+                    }
                     res.end();
                     return;
                 default:

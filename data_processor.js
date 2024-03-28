@@ -4,17 +4,41 @@ const {createReadStream } = require("node:fs");
 const {createInterface } = require("node:readline");
 
 class FsHelper {
-    static FILE_PATH = "events.txt";
+    static SRC_EVENTS_FILE_PATH = "events.jsonl";
+    static RECIEVED_EVENTS_FILE_PATH = "recieved-events.jsonl";
 
-    static createLinesReader() {
-        return createInterface({
-            input: createReadStream(FsHelper.FILE_PATH),
-            crlfDelay: Infinity,
+    static async storeEvent(event) {
+        await fs.promises.appendFile(FsHelper.RECIEVED_EVENTS_FILE_PATH, JSON.stringify(event) + "\n", {encoding: "utf-8"});
+    }
+
+    static async readFileLines(path, linesHandler) {
+
+        // The 'linesReader' enable us to read the file content in 'line by line' manner.
+        const linesReader = FsHelper._createLinesReader(path);
+
+        // Deal with events of the lines reader.
+        return new Promise(async (resolve, reject) => {
+            linesReader.on("close", () => {
+                // * File's lines reading ended, resolve the promise.
+                // * The 'setTimeout()' is workaround, to deal with bizarre behavior of the lines reader ('close' event triggered before last 'line' event).
+                setTimeout(resolve, 1000);
+            });
+            linesReader.on("error", (err) => {
+                // File's lines reading failed, reject the promise.
+                reject(err);
+            });
+            linesReader.on("line", async (line) => {
+                // File's lines reader notify about current fetched line, notify client about the line.
+                await linesHandler(line);
+            });
         });
     }
 
-    async storeEvent(event) {
-        await fs.promises.appendFile(FsHelper.FILE_PATH, JSON.stringify(event) + "\n", {encoding: "utf-8"});
+    static _createLinesReader(path) {
+        return createInterface({
+            input: createReadStream(path),
+            crlfDelay: Infinity,
+        });
     }
 }
 
@@ -82,9 +106,15 @@ class DbHelper {
     }
 }
 
+  
+module.exports = {
+    DbHelper,
+    FsHelper
+}
+
 class DataProcessor {
 
-    static async update() {
+    static async run() {
         let dbHelper;
         try {
             dbHelper = await DbHelper.create();
@@ -129,40 +159,24 @@ class DataProcessor {
     }
 
     static async _updateDbFromFile(dbHelper) {
-
-        // The 'linesReader' enable us to read the file content in 'line by line' manner.
-        const linesReader = FsHelper.createLinesReader();
-
-        // Deal with events of the lines reader.
-        return new Promise(async (resolve, reject) => {
-            linesReader.on("close", () => {
-                // * File's lines reading ended, resolve the promise.
-                // * The 'setTimeout()' is workaround, to deal with bizarre behavior of the lines reader ('close' event triggered before last 'line' event).
-                setTimeout(resolve, 1000);
-            });
-            linesReader.on("error", (err) => {
-                // File's lines reading failed, reject the promise.
-                reject(err);
-            });
-            linesReader.on("line", async (line) => {
-                // File's lines reader notify about current fetched line, create/update relevant row in DB.
-                await DataProcessor._updateDbFromLine(line, dbHelper);
-            });
+        await FsHelper.readFileLines(FsHelper.RECIEVED_EVENTS_FILE_PATH, async (line) => {
+            // File's lines reader notify about current fetched line, create/update relevant row in DB.
+            await DataProcessor._updateDbFromLine(line, dbHelper);
         });
     }
 }
 
+// Current file may loaded due to invocation of other JS files (becuse they consume classes
+// 'DbHelper' or 'FSHelper'), in such a case - do not invoke the method 'DataProcessor.run()'.
+if (!process.argv[1].endsWith("data_processor.js")) {
+    return;
+}
+
 console.info("Update started");
-DataProcessor.update()
+DataProcessor.run()
     .then(() => {
         console.info("Update ended");
     })
     .catch((err) => {
         console.error("Update failed", {err});
     })
-
-    
-module.exports = {
-    DbHelper,
-    FsHelper
-}
